@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>SRT Timecode Recalculator (Offset / Align)</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#101722; --panel2:#0f1620; --border:#243246;
+      --text:#e6eefc; --muted:#98a6bd; --accent:#7aa7ff; --danger:#ff6b6b;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background:linear-gradient(180deg, #08101a, #070b10);
+      color:var(--text);
+    }
+    header{
+      padding:16px 18px; border-bottom:1px solid var(--border);
+      background:rgba(16,23,34,.85); backdrop-filter: blur(8px);
+      position:sticky; top:0; z-index:10;
+    }
+    header h1{margin:0; font-size:16px; font-weight:650}
+    header p{margin:6px 0 0; color:var(--muted); font-size:12px; line-height:1.35}
+    .wrap{padding:16px 18px; max-width:1400px; margin:0 auto;}
+    .controls{
+      display:grid;
+      grid-template-columns: 1.2fr 1fr 1fr 1fr;
+      gap:12px;
+      padding:12px;
+      border:1px solid var(--border);
+      background:rgba(16,23,34,.7);
+      border-radius:14px;
+    }
+    .field{display:flex; flex-direction:column; gap:6px;}
+    label{font-size:12px; color:var(--muted)}
+    input, select, button{
+      border:1px solid var(--border);
+      background:var(--panel2);
+      color:var(--text);
+      padding:10px 10px;
+      border-radius:10px;
+      font-size:13px;
+      outline:none;
+    }
+    input::placeholder{color:#6f7f99}
+    .row{
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    }
+    .btn{
+      cursor:pointer;
+      background:linear-gradient(180deg, rgba(122,167,255,.18), rgba(122,167,255,.08));
+      border:1px solid rgba(122,167,255,.35);
+      font-weight:650;
+    }
+    .btn:hover{filter:brightness(1.08)}
+    .btn.secondary{
+      background:rgba(255,255,255,.03);
+      border:1px solid var(--border);
+      font-weight:600;
+    }
+    .btn.danger{
+      background:rgba(255,107,107,.08);
+      border:1px solid rgba(255,107,107,.35);
+    }
+    .status{
+      margin-top:10px;
+      padding:10px 12px;
+      border:1px solid var(--border);
+      background:rgba(16,23,34,.55);
+      border-radius:12px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.45;
+      white-space:pre-wrap;
+    }
+
+    .panes{
+      margin-top:14px;
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:12px;
+    }
+    .pane{
+      border:1px solid var(--border);
+      background:rgba(16,23,34,.55);
+      border-radius:14px;
+      overflow:hidden;
+      display:flex;
+      flex-direction:column;
+      min-height:520px;
+    }
+    .paneHeader{
+      padding:10px 12px;
+      border-bottom:1px solid var(--border);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      background:rgba(15,22,32,.55);
+    }
+    .paneHeader .title{font-size:12px; color:var(--muted)}
+    .paneHeader .tools{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+
+    /* Resizable container that doesn't fight flex sizing */
+    .resizable{
+      flex:1;
+      resize: both;
+      overflow: auto;
+      min-height: 220px;
+    }
+    textarea{
+      width:100%;
+      height:100%;
+      min-height:520px; /* will be overridden by container resize */
+      padding:12px;
+      border:0;
+      outline:none;
+      background:transparent;
+      color:var(--text);
+      font-size:13px;
+      line-height:1.45;
+      white-space:pre;
+      resize: none; /* resize the container instead */
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    .small{
+      font-size:12px; color:var(--muted);
+    }
+
+    @media (max-width: 1100px){
+      .controls{grid-template-columns: 1fr 1fr}
+      .panes{grid-template-columns: 1fr}
+      textarea{min-height:420px}
+      .pane{min-height:420px}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>SRT Timecode Recalculator (Offset / Align)</h1>
+  <p>
+    Paste your SRT (starting at 00:00:00,000), enter the source video start timecode, and it will shift all cue times.
+    Accepts <b>HH:MM:SS,mmm</b> / <b>HH:MM:SS.mmm</b> or frame timecode <b>HH:MM:SS:FF</b> (choose FPS).
+  </p>
+</header>
+
+<div class="wrap">
+  <div class="controls">
+    <div class="field">
+      <label>Source video start timecode (the timecode you want SRT to align to)</label>
+      <input id="sourceTC" placeholder="e.g. 01:02:03,500  or  01:02:03:12" value="01:00:00,000"/>
+      <div class="small">Tip: If you type HH:MM:SS:FF, FPS below will be used.</div>
+    </div>
+
+    <div class="field">
+      <label>Mode</label>
+      <select id="mode">
+        <option value="zeroToSource" selected>Make SRT 00:00:00,000 become the source timecode (add offset)</option>
+        <option value="firstToSource">Make FIRST subtitle start become the source timecode (align first cue)</option>
+      </select>
+      <div class="small">Use “first cue” if your SRT doesn’t start at 0.</div>
+    </div>
+
+    <div class="field">
+      <label>FPS (only if using HH:MM:SS:FF)</label>
+      <select id="fps">
+        <option value="23.976">23.976</option>
+        <option value="24">24</option>
+        <option value="25" selected>25</option>
+        <option value="29.97">29.97</option>
+        <option value="30">30</option>
+      </select>
+      <div class="small">Frames will be converted to milliseconds.</div>
+    </div>
+
+    <div class="field">
+      <label>Options</label>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="clampZero" checked />
+          <span class="small">Clamp negatives to 00:00:00,000</span>
+        </label>
+      </div>
+      <div class="row">
+        <button class="btn" id="processBtn">Recalculate</button>
+        <button class="btn secondary" id="swapBtn" title="Move output back to input">Output → Input</button>
+        <button class="btn danger" id="clearBtn" title="Clear both boxes">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="status">Ready.</div>
+
+  <div class="panes">
+    <div class="pane">
+      <div class="paneHeader">
+        <div class="title">Input SRT</div>
+        <div class="tools">
+          <span class="small" id="inCount"></span>
+        </div>
+      </div>
+      <div class="resizable">
+        <textarea id="input" spellcheck="false" placeholder="Paste SRT here..."></textarea>
+      </div>
+    </div>
+
+    <div class="pane">
+      <div class="paneHeader">
+        <div class="title">Output SRT</div>
+        <div class="tools">
+          <button class="btn secondary" id="copyBtn">Copy</button>
+          <button class="btn secondary" id="downloadBtn">Download .srt</button>
+          <span class="small" id="outCount"></span>
+        </div>
+      </div>
+      <div class="resizable">
+        <textarea id="output" spellcheck="false" placeholder="Your recalculated SRT will appear here..."></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const el = (id) => document.getElementById(id);
+
+  function pad2(n){ return String(n).padStart(2,'0'); }
+  function pad3(n){ return String(n).padStart(3,'0'); }
+
+  function msToSrt(ms){
+    if (!Number.isFinite(ms)) return "00:00:00,000";
+    const sign = ms < 0 ? -1 : 1;
+    ms = Math.abs(Math.round(ms));
+
+    const h = Math.floor(ms / 3600000);
+    ms %= 3600000;
+    const m = Math.floor(ms / 60000);
+    ms %= 60000;
+    const s = Math.floor(ms / 1000);
+    const mm = ms % 1000;
+
+    // SRT commonly uses 2-digit hours, but we allow >99 by not truncating.
+    const hh = String(h).padStart(2,'0');
+    return `${hh}:${pad2(m)}:${pad2(s)},${pad3(mm)}`;
+  }
+
+  function parseTimecodeToMs(str, fps){
+    if (!str) return null;
+    const t = str.trim();
+
+    // Frame format: HH:MM:SS:FF
+    const frameMatch = t.match(/^(\d{1,3}):(\d{2}):(\d{2}):(\d{2})$/);
+    if (frameMatch){
+      const hh = parseInt(frameMatch[1],10);
+      const mm = parseInt(frameMatch[2],10);
+      const ss = parseInt(frameMatch[3],10);
+      const ff = parseInt(frameMatch[4],10);
+      const fpsNum = Number(fps);
+      if (!fpsNum || fpsNum <= 0) return null;
+      const baseMs = ((hh*3600 + mm*60 + ss) * 1000);
+      const frameMs = (ff * (1000 / fpsNum));
+      return baseMs + frameMs;
+    }
+
+    // Millisecond format: HH:MM:SS,mmm or HH:MM:SS.mmm
+    const msMatch = t.match(/^(\d{1,3}):(\d{2}):(\d{2})([,.])(\d{1,3})$/);
+    if (msMatch){
+      const hh = parseInt(msMatch[1],10);
+      const mm = parseInt(msMatch[2],10);
+      const ss = parseInt(msMatch[3],10);
+      let mmm = msMatch[5];
+      // normalize to 3 digits
+      if (mmm.length === 1) mmm = mmm + "00";
+      else if (mmm.length === 2) mmm = mmm + "0";
+      else if (mmm.length > 3) mmm = mmm.slice(0,3);
+      const ms = parseInt(mmm,10);
+      return ((hh*3600 + mm*60 + ss) * 1000) + ms;
+    }
+
+    return null;
+  }
+
+  function parseSrtTimestamp(ts){
+    // Accept 00:00:00,000 or 00:00:00.000
+    const m = ts.trim().match(/^(\d{1,3}):(\d{2}):(\d{2})([,.])(\d{1,3})$/);
+    if (!m) return null;
+    const hh = parseInt(m[1],10);
+    const mm = parseInt(m[2],10);
+    const ss = parseInt(m[3],10);
+    let msStr = m[5];
+    if (msStr.length === 1) msStr = msStr + "00";
+    else if (msStr.length === 2) msStr = msStr + "0";
+    else if (msStr.length > 3) msStr = msStr.slice(0,3);
+    const ms = parseInt(msStr,10);
+    return ((hh*3600 + mm*60 + ss) * 1000) + ms;
+  }
+
+  function countCues(srtText){
+    const re = /(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})\s*-->\s*(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})/g;
+    let c=0;
+    while(re.exec(srtText)) c++;
+    return c;
+  }
+
+  function recalc(){
+    const input = el("input").value || "";
+    const fps = el("fps").value;
+    const mode = el("mode").value;
+    const clampZero = el("clampZero").checked;
+
+    el("inCount").textContent = input ? `${countCues(input)} cue(s) detected` : "";
+
+    const srcStr = el("sourceTC").value;
+    const sourceMs = parseTimecodeToMs(srcStr, fps);
+    if (sourceMs === null){
+      el("status").textContent = `❌ Could not parse source timecode: "${srcStr}".\nUse HH:MM:SS,mmm or HH:MM:SS:FF.`;
+      return;
+    }
+
+    // Find first cue start time if needed
+    let firstStartMs = 0;
+    if (mode === "firstToSource"){
+      const firstMatch = input.match(/(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})\s*-->\s*(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})/);
+      if (!firstMatch){
+        el("status").textContent = `❌ No SRT timecode lines found in input.`;
+        return;
+      }
+      firstStartMs = parseSrtTimestamp(firstMatch[1]);
+      if (firstStartMs === null){
+        el("status").textContent = `❌ Could not parse first cue time: "${firstMatch[1]}".`;
+        return;
+      }
+    }
+
+    const offsetMs = (mode === "zeroToSource") ? sourceMs : (sourceMs - firstStartMs);
+
+    const re = /(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})\s*-->\s*(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})/g;
+
+    let replaced = 0;
+    const out = input.replace(re, (line, a, b) => {
+      const aMs = parseSrtTimestamp(a);
+      const bMs = parseSrtTimestamp(b);
+      if (aMs === null || bMs === null) return line;
+
+      let na = aMs + offsetMs;
+      let nb = bMs + offsetMs;
+
+      if (clampZero){
+        na = Math.max(0, na);
+        nb = Math.max(0, nb);
+      }
+
+      replaced++;
+      return `${msToSrt(na)} --> ${msToSrt(nb)}`;
+    });
+
+    el("output").value = out;
+    el("outCount").textContent = out ? `${countCues(out)} cue(s) in output` : "";
+
+    const modeLabel = mode === "zeroToSource"
+      ? `Mode: SRT 00:00:00,000 → ${msToSrt(sourceMs)}`
+      : `Mode: First cue → ${msToSrt(sourceMs)} (first cue was ${msToSrt(firstStartMs)})`;
+
+    el("status").textContent =
+      `✅ Done.\n${modeLabel}\nOffset applied: ${offsetMs >= 0 ? "+" : ""}${msToSrt(offsetMs)}\nCues updated: ${replaced}`;
+  }
+
+  function copyOut(){
+    const txt = el("output").value || "";
+    if (!txt){
+      el("status").textContent = "Nothing to copy (output is empty).";
+      return;
+    }
+    navigator.clipboard.writeText(txt)
+      .then(() => el("status").textContent = "✅ Copied output to clipboard.")
+      .catch(() => el("status").textContent = "❌ Clipboard copy failed (browser permission).");
+  }
+
+  function downloadOut(){
+    const txt = el("output").value || "";
+    if (!txt){
+      el("status").textContent = "Nothing to download (output is empty).";
+      return;
+    }
+    const blob = new Blob([txt], {type:"text/plain;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "recalculated.srt";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    el("status").textContent = "✅ Download started: recalculated.srt";
+  }
+
+  function swapOutputToInput(){
+    const out = el("output").value;
+    if (!out){
+      el("status").textContent = "Output is empty — nothing to move to input.";
+      return;
+    }
+    el("input").value = out;
+    el("status").textContent = "✅ Moved output back into input.";
+    el("inCount").textContent = `${countCues(out)} cue(s) detected`;
+  }
+
+  function clearAll(){
+    el("input").value = "";
+    el("output").value = "";
+    el("inCount").textContent = "";
+    el("outCount").textContent = "";
+    el("status").textContent = "Cleared.";
+  }
+
+  el("processBtn").addEventListener("click", recalc);
+  el("copyBtn").addEventListener("click", copyOut);
+  el("downloadBtn").addEventListener("click", downloadOut);
+  el("swapBtn").addEventListener("click", swapOutputToInput);
+  el("clearBtn").addEventListener("click", clearAll);
+
+  // Live cue counts
+  el("input").addEventListener("input", () => {
+    const v = el("input").value || "";
+    el("inCount").textContent = v ? `${countCues(v)} cue(s) detected` : "";
+  });
+</script>
+</body>
+</html>
