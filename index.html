@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>SRT Timecode Recalculator (Offset / Align)</title>
+  <title>SRT Timecode Recalculator (Frame + SRT + Text-safe)</title>
   <style>
     :root{
       --bg:#0b0f14; --panel:#101722; --panel2:#0f1620; --border:#243246;
@@ -44,9 +44,7 @@
       outline:none;
     }
     input::placeholder{color:#6f7f99}
-    .row{
-      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-    }
+    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
     .btn{
       cursor:pointer;
       background:linear-gradient(180deg, rgba(122,167,255,.18), rgba(122,167,255,.08));
@@ -74,7 +72,6 @@
       line-height:1.45;
       white-space:pre-wrap;
     }
-
     .panes{
       margin-top:14px;
       display:grid;
@@ -101,18 +98,11 @@
     }
     .paneHeader .title{font-size:12px; color:var(--muted)}
     .paneHeader .tools{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
-
-    /* Resizable container that doesn't fight flex sizing */
-    .resizable{
-      flex:1;
-      resize: both;
-      overflow: auto;
-      min-height: 220px;
-    }
+    .resizable{flex:1; resize: both; overflow: auto; min-height: 220px;}
     textarea{
       width:100%;
       height:100%;
-      min-height:520px; /* will be overridden by container resize */
+      min-height:520px;
       padding:12px;
       border:0;
       outline:none;
@@ -121,14 +111,10 @@
       font-size:13px;
       line-height:1.45;
       white-space:pre;
-      resize: none; /* resize the container instead */
+      resize:none;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     }
-
-    .small{
-      font-size:12px; color:var(--muted);
-    }
-
+    .small{font-size:12px; color:var(--muted);}
     @media (max-width: 1100px){
       .controls{grid-template-columns: 1fr 1fr}
       .panes{grid-template-columns: 1fr}
@@ -139,32 +125,33 @@
 </head>
 <body>
 <header>
-  <h1>SRT Timecode Recalculator (Offset / Align)</h1>
+  <h1>SRT Timecode Recalculator (works with text + frame timecodes)</h1>
   <p>
-    Paste your SRT (starting at 00:00:00,000), enter the source video start timecode, and it will shift all cue times.
-    Accepts <b>HH:MM:SS,mmm</b> / <b>HH:MM:SS.mmm</b> or frame timecode <b>HH:MM:SS:FF</b> (choose FPS).
+    Paste anything (labels, blank lines, subtitle text). The tool only changes lines containing time ranges like
+    <b>00:42:50:03 --> 00:42:52:22</b> (HH:MM:SS:FF) or standard SRT <b>00:00:01,000 --> 00:00:02,000</b>.
+    Everything else stays unchanged.
   </p>
 </header>
 
 <div class="wrap">
   <div class="controls">
     <div class="field">
-      <label>Source video start timecode (the timecode you want SRT to align to)</label>
-      <input id="sourceTC" placeholder="e.g. 01:02:03,500  or  01:02:03:12" value="01:00:00,000"/>
-      <div class="small">Tip: If you type HH:MM:SS:FF, FPS below will be used.</div>
+      <label>Source video start timecode (where SRT zero / first cue should align)</label>
+      <input id="sourceTC" placeholder="e.g. 10:51:54:18  or  10:51:54,720" value="10:51:54:18"/>
+      <div class="small">Accepts HH:MM:SS:FF or HH:MM:SS;FF or HH:MM:SS,mmm / .mmm or HH:MM:SS</div>
     </div>
 
     <div class="field">
       <label>Mode</label>
       <select id="mode">
-        <option value="zeroToSource" selected>Make SRT 00:00:00,000 become the source timecode (add offset)</option>
-        <option value="firstToSource">Make FIRST subtitle start become the source timecode (align first cue)</option>
+        <option value="zeroToSource" selected>Make 00:00:00,000 (or 00:00:00:00) become the source timecode</option>
+        <option value="firstToSource">Make FIRST detected timecode start become the source timecode</option>
       </select>
-      <div class="small">Use “first cue” if your SRT doesn’t start at 0.</div>
+      <div class="small">If your pasted excerpt starts mid-video, use “FIRST detected”.</div>
     </div>
 
     <div class="field">
-      <label>FPS (only if using HH:MM:SS:FF)</label>
+      <label>FPS (used for HH:MM:SS:FF parsing/output)</label>
       <select id="fps">
         <option value="23.976">23.976</option>
         <option value="24">24</option>
@@ -172,7 +159,7 @@
         <option value="29.97">29.97</option>
         <option value="30">30</option>
       </select>
-      <div class="small">Frames will be converted to milliseconds.</div>
+      <div class="small">For 25fps: 1 frame = 40ms.</div>
     </div>
 
     <div class="field">
@@ -180,7 +167,7 @@
       <div class="row">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
           <input type="checkbox" id="clampZero" checked />
-          <span class="small">Clamp negatives to 00:00:00,000</span>
+          <span class="small">Clamp negatives to 00:00:00,000 / 00:00:00:00</span>
         </label>
       </div>
       <div class="row">
@@ -196,27 +183,27 @@
   <div class="panes">
     <div class="pane">
       <div class="paneHeader">
-        <div class="title">Input SRT</div>
+        <div class="title">Input</div>
         <div class="tools">
           <span class="small" id="inCount"></span>
         </div>
       </div>
       <div class="resizable">
-        <textarea id="input" spellcheck="false" placeholder="Paste SRT here..."></textarea>
+        <textarea id="input" spellcheck="false" placeholder="Paste your timecodes + subtitle text here..."></textarea>
       </div>
     </div>
 
     <div class="pane">
       <div class="paneHeader">
-        <div class="title">Output SRT</div>
+        <div class="title">Output</div>
         <div class="tools">
           <button class="btn secondary" id="copyBtn">Copy</button>
-          <button class="btn secondary" id="downloadBtn">Download .srt</button>
+          <button class="btn secondary" id="downloadBtn">Download .txt</button>
           <span class="small" id="outCount"></span>
         </div>
       </div>
       <div class="resizable">
-        <textarea id="output" spellcheck="false" placeholder="Your recalculated SRT will appear here..."></textarea>
+        <textarea id="output" spellcheck="false" placeholder="Converted timecodes will appear here (text unchanged)..."></textarea>
       </div>
     </div>
   </div>
@@ -225,81 +212,124 @@
 <script>
   const el = (id) => document.getElementById(id);
 
-  function pad2(n){ return String(n).padStart(2,'0'); }
-  function pad3(n){ return String(n).padStart(3,'0'); }
-
-  function msToSrt(ms){
-    if (!Number.isFinite(ms)) return "00:00:00,000";
-    const sign = ms < 0 ? -1 : 1;
-    ms = Math.abs(Math.round(ms));
-
-    const h = Math.floor(ms / 3600000);
-    ms %= 3600000;
-    const m = Math.floor(ms / 60000);
-    ms %= 60000;
-    const s = Math.floor(ms / 1000);
-    const mm = ms % 1000;
-
-    // SRT commonly uses 2-digit hours, but we allow >99 by not truncating.
-    const hh = String(h).padStart(2,'0');
-    return `${hh}:${pad2(m)}:${pad2(s)},${pad3(mm)}`;
-  }
-
-  function parseTimecodeToMs(str, fps){
+  // Parse time strings to milliseconds (Number, may be float due to fps conversion).
+  // Supports:
+  // - HH:MM:SS:FF or HH:MM:SS;FF
+  // - HH:MM:SS,mmm or HH:MM:SS.mmm
+  // - HH:MM:SS (assume ,000)
+  // - MM:SS or MM:SS,mmm / .mmm (assume hour=0)
+  function parseAnyTimeToMs(str, fps){
     if (!str) return null;
-    const t = str.trim();
+    const t = String(str).trim();
+    const fpsNum = Number(fps);
 
-    // Frame format: HH:MM:SS:FF
-    const frameMatch = t.match(/^(\d{1,3}):(\d{2}):(\d{2}):(\d{2})$/);
-    if (frameMatch){
-      const hh = parseInt(frameMatch[1],10);
-      const mm = parseInt(frameMatch[2],10);
-      const ss = parseInt(frameMatch[3],10);
-      const ff = parseInt(frameMatch[4],10);
-      const fpsNum = Number(fps);
-      if (!fpsNum || fpsNum <= 0) return null;
-      const baseMs = ((hh*3600 + mm*60 + ss) * 1000);
-      const frameMs = (ff * (1000 / fpsNum));
+    // Frame format: HH:MM:SS:FF or HH:MM:SS;FF
+    let m = t.match(/^(\d{1,3}):(\d{1,2}):(\d{1,2})[:;](\d{1,3})$/);
+    if (m){
+      const hh = parseInt(m[1],10);
+      const mm = parseInt(m[2],10);
+      const ss = parseInt(m[3],10);
+      const ff = parseInt(m[4],10);
+      if (!Number.isFinite(fpsNum) || fpsNum <= 0) return null;
+      const baseMs = (hh*3600 + mm*60 + ss) * 1000;
+      const frameMs = ff * (1000 / fpsNum);
       return baseMs + frameMs;
     }
 
-    // Millisecond format: HH:MM:SS,mmm or HH:MM:SS.mmm
-    const msMatch = t.match(/^(\d{1,3}):(\d{2}):(\d{2})([,.])(\d{1,3})$/);
-    if (msMatch){
-      const hh = parseInt(msMatch[1],10);
-      const mm = parseInt(msMatch[2],10);
-      const ss = parseInt(msMatch[3],10);
-      let mmm = msMatch[5];
-      // normalize to 3 digits
-      if (mmm.length === 1) mmm = mmm + "00";
-      else if (mmm.length === 2) mmm = mmm + "0";
-      else if (mmm.length > 3) mmm = mmm.slice(0,3);
-      const ms = parseInt(mmm,10);
-      return ((hh*3600 + mm*60 + ss) * 1000) + ms;
+    // HH:MM:SS,mmm or HH:MM:SS.mmm
+    m = t.match(/^(\d{1,3}):(\d{1,2}):(\d{1,2})([,.])(\d{1,6})$/);
+    if (m){
+      const hh = parseInt(m[1],10);
+      const mm = parseInt(m[2],10);
+      const ss = parseInt(m[3],10);
+      let msStr = m[5];
+      // Normalize to 3 digits (truncate/pad)
+      if (msStr.length === 1) msStr = msStr + "00";
+      else if (msStr.length === 2) msStr = msStr + "0";
+      else if (msStr.length > 3) msStr = msStr.slice(0,3);
+      const ms = parseInt(msStr,10);
+      return (hh*3600 + mm*60 + ss) * 1000 + ms;
+    }
+
+    // HH:MM:SS
+    m = t.match(/^(\d{1,3}):(\d{1,2}):(\d{1,2})$/);
+    if (m){
+      const hh = parseInt(m[1],10);
+      const mm = parseInt(m[2],10);
+      const ss = parseInt(m[3],10);
+      return (hh*3600 + mm*60 + ss) * 1000;
+    }
+
+    // MM:SS,mmm or MM:SS.mmm
+    m = t.match(/^(\d{1,2}):(\d{1,2})([,.])(\d{1,6})$/);
+    if (m){
+      const mm = parseInt(m[1],10);
+      const ss = parseInt(m[2],10);
+      let msStr = m[4];
+      if (msStr.length === 1) msStr = msStr + "00";
+      else if (msStr.length === 2) msStr = msStr + "0";
+      else if (msStr.length > 3) msStr = msStr.slice(0,3);
+      const ms = parseInt(msStr,10);
+      return (mm*60 + ss) * 1000 + ms;
+    }
+
+    // MM:SS
+    m = t.match(/^(\d{1,2}):(\d{1,2})$/);
+    if (m){
+      const mm = parseInt(m[1],10);
+      const ss = parseInt(m[2],10);
+      return (mm*60 + ss) * 1000;
     }
 
     return null;
   }
 
-  function parseSrtTimestamp(ts){
-    // Accept 00:00:00,000 or 00:00:00.000
-    const m = ts.trim().match(/^(\d{1,3}):(\d{2}):(\d{2})([,.])(\d{1,3})$/);
-    if (!m) return null;
-    const hh = parseInt(m[1],10);
-    const mm = parseInt(m[2],10);
-    const ss = parseInt(m[3],10);
-    let msStr = m[5];
-    if (msStr.length === 1) msStr = msStr + "00";
-    else if (msStr.length === 2) msStr = msStr + "0";
-    else if (msStr.length > 3) msStr = msStr.slice(0,3);
-    const ms = parseInt(msStr,10);
-    return ((hh*3600 + mm*60 + ss) * 1000) + ms;
+  function pad2(n){ return String(n).padStart(2,'0'); }
+  function pad3(n){ return String(n).padStart(3,'0'); }
+
+  function msToSrt(ms, decimalSep){
+    if (!Number.isFinite(ms)) ms = 0;
+    ms = Math.max(0, ms);
+    ms = Math.round(ms);
+    const h = Math.floor(ms / 3600000); ms %= 3600000;
+    const m = Math.floor(ms / 60000); ms %= 60000;
+    const s = Math.floor(ms / 1000);
+    const mm = ms % 1000;
+    const hh = String(h).padStart(2,'0');
+    const sep = decimalSep || ',';
+    return `${hh}:${pad2(m)}:${pad2(s)}${sep}${pad3(mm)}`;
   }
 
-  function countCues(srtText){
-    const re = /(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})\s*-->\s*(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})/g;
-    let c=0;
-    while(re.exec(srtText)) c++;
+  function msToFrameTC(ms, fps, frameSep){
+    const fpsNum = Number(fps);
+    if (!Number.isFinite(ms)) ms = 0;
+    ms = Math.max(0, ms);
+
+    // Use ms-based breakup then compute frame from remainder
+    let totalSeconds = Math.floor(ms / 1000);
+    let remMs = ms - totalSeconds * 1000;
+    let ff = Math.round(remMs * fpsNum / 1000);
+
+    // Carry if rounding hits fps
+    const fpsCarry = Math.floor(fpsNum + 1e-6) || 1;
+    if (ff >= fpsCarry){
+      totalSeconds += 1;
+      ff = 0;
+    }
+
+    const hh = Math.floor(totalSeconds / 3600);
+    totalSeconds %= 3600;
+    const mm = Math.floor(totalSeconds / 60);
+    const ss = totalSeconds % 60;
+
+    const sep = frameSep || ':';
+    return `${String(hh).padStart(2,'0')}:${pad2(mm)}:${pad2(ss)}${sep}${String(ff).padStart(2,'0')}`;
+  }
+
+  // Count time range lines
+  function countRanges(text){
+    const re = /(\d{1,3}:\d{1,2}:\d{1,2}(?:[:;]\d{1,3}|[,.]\d{1,6})|\d{1,2}:\d{1,2}(?:[,.]\d{1,6})?)\s*-->\s*(\d{1,3}:\d{1,2}:\d{1,2}(?:[:;]\d{1,3}|[,.]\d{1,6})|\d{1,2}:\d{1,2}(?:[,.]\d{1,6})?)/g;
+    let c=0; while(re.exec(text)) c++;
     return c;
   }
 
@@ -309,61 +339,76 @@
     const mode = el("mode").value;
     const clampZero = el("clampZero").checked;
 
-    el("inCount").textContent = input ? `${countCues(input)} cue(s) detected` : "";
+    el("inCount").textContent = input ? `${countRanges(input)} time range(s) detected` : "";
 
     const srcStr = el("sourceTC").value;
-    const sourceMs = parseTimecodeToMs(srcStr, fps);
+    const sourceMs = parseAnyTimeToMs(srcStr, fps);
     if (sourceMs === null){
-      el("status").textContent = `❌ Could not parse source timecode: "${srcStr}".\nUse HH:MM:SS,mmm or HH:MM:SS:FF.`;
+      el("status").textContent = `❌ Could not parse source timecode: "${srcStr}".\nTry HH:MM:SS:FF or HH:MM:SS,mmm or HH:MM:SS.`;
       return;
     }
 
-    // Find first cue start time if needed
+    // Regex captures:
+    // 1) start time, 2) end time, 3) trailing settings (optional)
+    const rangeRe = /(\d{1,3}:\d{1,2}:\d{1,2}(?:[:;]\d{1,3}|[,.]\d{1,6})|\d{1,2}:\d{1,2}(?:[,.]\d{1,6})?)\s*-->\s*(\d{1,3}:\d{1,2}:\d{1,2}(?:[:;]\d{1,3}|[,.]\d{1,6})|\d{1,2}:\d{1,2}(?:[,.]\d{1,6})?)([^\n\r]*)/g;
+
+    // Find first start time if align-first
     let firstStartMs = 0;
     if (mode === "firstToSource"){
-      const firstMatch = input.match(/(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})\s*-->\s*(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})/);
-      if (!firstMatch){
-        el("status").textContent = `❌ No SRT timecode lines found in input.`;
+      const m = rangeRe.exec(input);
+      rangeRe.lastIndex = 0; // reset
+      if (!m){
+        el("status").textContent = "❌ No time ranges found in input.";
         return;
       }
-      firstStartMs = parseSrtTimestamp(firstMatch[1]);
+      firstStartMs = parseAnyTimeToMs(m[1], fps);
       if (firstStartMs === null){
-        el("status").textContent = `❌ Could not parse first cue time: "${firstMatch[1]}".`;
+        el("status").textContent = `❌ Could not parse first timecode: "${m[1]}".`;
         return;
       }
     }
 
     const offsetMs = (mode === "zeroToSource") ? sourceMs : (sourceMs - firstStartMs);
 
-    const re = /(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})\s*-->\s*(\d{1,3}:\d{2}:\d{2}[,\.]\d{1,3})/g;
+    let updated = 0;
 
-    let replaced = 0;
-    const out = input.replace(re, (line, a, b) => {
-      const aMs = parseSrtTimestamp(a);
-      const bMs = parseSrtTimestamp(b);
-      if (aMs === null || bMs === null) return line;
+    const out = input.replace(rangeRe, (full, startStr, endStr, tail) => {
+      const aMs = parseAnyTimeToMs(startStr, fps);
+      const bMs = parseAnyTimeToMs(endStr, fps);
+      if (aMs === null || bMs === null) return full;
 
       let na = aMs + offsetMs;
       let nb = bMs + offsetMs;
-
       if (clampZero){
         na = Math.max(0, na);
         nb = Math.max(0, nb);
       }
 
-      replaced++;
-      return `${msToSrt(na)} --> ${msToSrt(nb)}`;
+      // Decide output format based on original startStr (prefer frame if it had :FF or ;FF)
+      const isFrame = /[:;]\d{1,3}$/.test(startStr.trim()) || /[:;]\d{1,3}$/.test(endStr.trim());
+      const frameSepMatch = startStr.includes(';') ? ';' : ':';
+      const decSepMatch = startStr.includes('.') ? '.' : ','; // keep comma by default
+
+      const newStart = isFrame ? msToFrameTC(na, fps, frameSepMatch) : msToSrt(na, decSepMatch);
+      const newEnd   = isFrame ? msToFrameTC(nb, fps, frameSepMatch) : msToSrt(nb, decSepMatch);
+
+      updated++;
+      return `${newStart} --> ${newEnd}${tail || ""}`;
     });
 
     el("output").value = out;
-    el("outCount").textContent = out ? `${countCues(out)} cue(s) in output` : "";
+    el("outCount").textContent = out ? `${countRanges(out)} time range(s) in output` : "";
+
+    const sign = offsetMs >= 0 ? "+" : "-";
+    const absOffset = Math.abs(offsetMs);
+    const offsetPretty = msToSrt(absOffset, ',');
 
     const modeLabel = mode === "zeroToSource"
-      ? `Mode: SRT 00:00:00,000 → ${msToSrt(sourceMs)}`
-      : `Mode: First cue → ${msToSrt(sourceMs)} (first cue was ${msToSrt(firstStartMs)})`;
+      ? `Mode: 00:00:00,000 / 00:00:00:00 → source (${srcStr})`
+      : `Mode: FIRST timecode → source (${srcStr})`;
 
     el("status").textContent =
-      `✅ Done.\n${modeLabel}\nOffset applied: ${offsetMs >= 0 ? "+" : ""}${msToSrt(offsetMs)}\nCues updated: ${replaced}`;
+      `✅ Done.\n${modeLabel}\nOffset applied: ${sign}${offsetPretty} (fps=${fps})\nTime ranges updated: ${updated}`;
   }
 
   function copyOut(){
@@ -387,12 +432,12 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "recalculated.srt";
+    a.download = "timecode_converted.txt";
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    el("status").textContent = "✅ Download started: recalculated.srt";
+    el("status").textContent = "✅ Download started: timecode_converted.txt";
   }
 
   function swapOutputToInput(){
@@ -403,7 +448,7 @@
     }
     el("input").value = out;
     el("status").textContent = "✅ Moved output back into input.";
-    el("inCount").textContent = `${countCues(out)} cue(s) detected`;
+    el("inCount").textContent = `${countRanges(out)} time range(s) detected`;
   }
 
   function clearAll(){
@@ -420,11 +465,31 @@
   el("swapBtn").addEventListener("click", swapOutputToInput);
   el("clearBtn").addEventListener("click", clearAll);
 
-  // Live cue counts
   el("input").addEventListener("input", () => {
     const v = el("input").value || "";
-    el("inCount").textContent = v ? `${countCues(v)} cue(s) detected` : "";
+    el("inCount").textContent = v ? `${countRanges(v)} time range(s) detected` : "";
   });
+
+  // Demo sample (matches your example) - comment out if undesired
+  el("input").value =
+`B2_Audio
+00:42:50:03 --> 00:42:52:22
+那么现在就是说大家怕AI
+
+
+00:42:54:04 --> 00:42:57:01
+会取代你的工作
+
+00:42:58:18 --> 00:43:05:01
+一个前提就是说
+我们太像AI了
+所以AI才取代你
+
+
+00:44:03:05 --> 00:44:06:01
+现在就逼着你必须要更像人
+`;
+  el("inCount").textContent = `${countRanges(el("input").value)} time range(s) detected`;
 </script>
 </body>
 </html>
